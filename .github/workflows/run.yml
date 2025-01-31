@@ -1,30 +1,39 @@
-name: Run
-
-on:
-  workflow_dispatch:
-    inputs:
-      deb:
-        description: "Direct URL to deb file"
-        required: true
-
-jobs:
-  run:
-    runs-on: ubuntu-latest
-
     steps:
       - name: Convert deb to IPA
         run: |
-          curl -L -o ${{ github.workspace }}/app.deb "${{ github.event.inputs.deb }}"
-          dpkg-deb -X ${{ github.workspace }}/app.deb ${{ github.workspace }}/app
-
-          mkdir -p ${{ github.workspace }}/ipa/Payload
-          cp -R ${{ github.workspace }}/app/Applications/* ${{ github.workspace }}/ipa/Payload
+          # Extract the filename from the deb URL
+          deb_url="${{ github.event.inputs.deb }}"
+          deb_filename=$(basename "$deb_url" .deb)
+          # Download the .deb file
+          curl -L -o ${{ github.workspace }}/app.deb "$deb_url"
           
+          # Extract the contents of the .deb file
+          dpkg-deb -X ${{ github.workspace }}/app.deb ${{ github.workspace }}/app
+          # Create the IPA Payload directory
+          mkdir -p ${{ github.workspace }}/ipa/Payload
+          # Check if the extracted files are in var/jb/Applications or Library
+          if [ -d "${{ github.workspace }}/app/var/jb/Applications" ]; then
+            cp -R ${{ github.workspace }}/app/var/jb/Applications/* ${{ github.workspace }}/ipa/Payload
+          elif [ -d "${{ github.workspace }}/app/var/jb/Library/MobileSubstrate/DynamicLibraries" ]; then
+            mkdir -p ${{ github.workspace }}/ipa/Payload/Library/MobileSubstrate/DynamicLibraries
+            cp -R ${{ github.workspace }}/app/var/jb/Library/MobileSubstrate/DynamicLibraries/* ${{ github.workspace }}/ipa/Payload/Library/MobileSubstrate/DynamicLibraries
+          else
+            echo "No valid application files found in expected directories."
+            exit 1
+          fi
+          
+          # Create the IPA file using the .deb filename
           cd ${{ github.workspace }}/ipa
-          zip -r ${{ github.workspace }}/App.ipa .
-
+          zip -r "${deb_filename}.ipa" Payload
+          # Ensure the IPA file exists
+          if [ -f "${deb_filename}.ipa" ]; then
+            echo "IPA created successfully as ${deb_filename}.ipa!"
+          else
+            echo "IPA creation failed."
+            exit 1
+          fi
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: App
-          path: ${{ github.workspace }}/App.ipa
+          path: ${{ github.workspace }}/ipa/*.ipa
